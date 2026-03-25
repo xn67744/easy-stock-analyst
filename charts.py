@@ -6,9 +6,8 @@ charts.py - OpenClaw Skill: 生成技术指标交互图
 2) 成交量
 3) MACD（红绿线柱，不用bar柱）
 4) KDJ
-5) BOLL 价格轨道 + 超买/超卖/背离标记
-6) BOLL %B 线柱 + 带宽 BW%
-7) 庄家分析：建仓VWAP、控盘成本、阶段判断
+5) BOLL 价格轨道 + K线蜡烛图 + 超买/超卖/背离标记（已移除BOLL %B子图）
+6) 庄家分析：建仓VWAP、控盘成本、阶段判断
 """
 
 import pandas as pd
@@ -186,15 +185,15 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
     ticktext = [df.iloc[i]["日期"].strftime("%m-%d") for i in tickvals]
 
     fig = make_subplots(
-        rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.015,
-        row_heights=[0.30, 0.09, 0.14, 0.14, 0.16, 0.17],
+        rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.015,
+        row_heights=[0.30, 0.09, 0.14, 0.14, 0.33],
         subplot_titles=[
             f"{stock_name}({stock_code}) K线+均线+波浪",
-            "成交量", "MACD(12,26,9)", "KDJ(9,3,3)", "BOLL(20,2)", "BOLL %B + 带宽"
+            "成交量", "MACD(12,26,9)", "KDJ(9,3,3)", "BOLL(20,2) + K线"
         ]
     )
 
-    # Row1 K线
+    # Row1: K线 + 均线 + 波段标记
     hover_txt = [
         f"{d.strftime('%Y-%m-%d')}<br>开:{o:.2f} 收:{c:.2f}<br>高:{h:.2f} 低:{l:.2f}<br>量:{v:,.0f}手"
         for d, o, c, h, l, v in zip(df["日期"], df["开盘"], df["收盘"], df["最高"], df["最低"], df["成交量(手)"])
@@ -203,14 +202,16 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
         x=x, open=df["开盘"], high=df["最高"], low=df["最低"], close=df["收盘"],
         increasing_line_color=RED, decreasing_line_color=GREEN,
         increasing_fillcolor=RED, decreasing_fillcolor=GREEN,
-        name="K线", text=hover_txt, hoverinfo="text"
+        name="K线", text=hover_txt, hoverinfo="text",
+        legendgroup="row1", legendgrouptitle_text="K线图"
     ), row=1, col=1)
 
     for ma, color in [("MA5", YELLOW), ("MA10", ORANGE), ("MA20", BLUE), ("MA60", PURPLE)]:
         if ma in df.columns:
             fig.add_trace(go.Scatter(
                 x=x, y=df[ma], name=ma, line=dict(color=color, width=1.3),
-                hovertemplate=f"{ma}<br>值:%{{y:.3f}}<extra></extra>"
+                hovertemplate=f"{ma}: %{{y:.3f}}<extra></extra>",
+                legendgroup="row1"
             ), row=1, col=1)
 
     max_i = int(df["最高"].idxmax())
@@ -224,77 +225,108 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
 
     pivots = find_wave_pivots(df, order=8)
     highs = [p for p in pivots if p["type"] == "H"]
-    lows = [p for p in pivots if p["type"] == "L"]
+    lows  = [p for p in pivots if p["type"] == "L"]
     if highs:
         fig.add_trace(go.Scatter(
             x=[p["idx"] for p in highs], y=[p["price"] for p in highs], mode="markers",
             name="波段高点", marker=dict(symbol="triangle-down", size=8, color="rgba(248,81,73,0.7)"),
-            hovertemplate="波段高点:%{y:.2f}<extra></extra>"
+            hovertemplate="波段高点:%{y:.2f}<extra></extra>",
+            legendgroup="row1"
         ), row=1, col=1)
     if lows:
         fig.add_trace(go.Scatter(
             x=[p["idx"] for p in lows], y=[p["price"] for p in lows], mode="markers",
             name="波段低点", marker=dict(symbol="triangle-up", size=8, color="rgba(63,185,80,0.7)"),
-            hovertemplate="波段低点:%{y:.2f}<extra></extra>"
+            hovertemplate="波段低点:%{y:.2f}<extra></extra>",
+            legendgroup="row1"
         ), row=1, col=1)
     if len(pivots) >= 2:
         fig.add_trace(go.Scatter(
             x=[p["idx"] for p in pivots], y=[p["price"] for p in pivots], mode="lines",
-            name="波浪趋势线", line=dict(color="rgba(200,200,200,0.25)", width=1, dash="dot"), hoverinfo="skip"
+            name="波浪趋势线", line=dict(color="rgba(200,200,200,0.25)", width=1, dash="dot"),
+            hoverinfo="skip", legendgroup="row1"
         ), row=1, col=1)
 
-    # Row2 成交量
+    # Row2: 成交量
     vol_color = [RED if c >= o else GREEN for c, o in zip(df["收盘"], df["开盘"])]
     fig.add_trace(go.Bar(
         x=x, y=df["成交量(手)"], name="成交量", marker_color=vol_color, showlegend=False,
         customdata=[d.strftime("%Y-%m-%d") for d in df["日期"]],
-        hovertemplate="%{customdata}<br>成交量:%{y:,.0f}手<extra></extra>"
+        hovertemplate="%{customdata}<br>成交量:%{y:,.0f}手<extra></extra>",
+        legendgroup="row2"
     ), row=2, col=1)
 
-    # Row3 MACD 线柱
+    # Row3: MACD 线柱（红绿柱不加图例，只显示DIF/DEA）
     xr, yr, xg, yg = _seg_lines(df["xi"], df["MACD_BAR"], 0)
-    fig.add_trace(go.Scatter(x=xr, y=yr, mode="lines", name="MACD红柱", line=dict(color=RED, width=2)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=xg, y=yg, mode="lines", name="MACD绿柱", line=dict(color=GREEN, width=2)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["DIF"], name="DIF", line=dict(color=BLUE, width=1.5)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["DEA"], name="DEA", line=dict(color=ORANGE, width=1.5)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=xr, y=yr, mode="lines", name="MACD红柱",
+        line=dict(color=RED, width=2), showlegend=False, legendgroup="row3"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=xg, y=yg, mode="lines", name="MACD绿柱",
+        line=dict(color=GREEN, width=2), showlegend=False, legendgroup="row3"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["DIF"], name="DIF",
+        line=dict(color=BLUE, width=1.5), legendgroup="row3",
+        legendgrouptitle_text="MACD"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["DEA"], name="DEA",
+        line=dict(color=ORANGE, width=1.5), legendgroup="row3"), row=3, col=1)
     fig.add_hline(y=0, line_color=GRID, line_width=1, row=3, col=1)
 
-    # Row4 KDJ
-    fig.add_trace(go.Scatter(x=x, y=df["K"], name="K", line=dict(color=BLUE, width=1.5)), row=4, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["D"], name="D", line=dict(color=ORANGE, width=1.5)), row=4, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["J"], name="J", line=dict(color=PURPLE, width=1, dash="dot")), row=4, col=1)
+    # Row4: KDJ
+    fig.add_trace(go.Scatter(x=x, y=df["K"], name="K",
+        line=dict(color=BLUE, width=1.5), legendgroup="row4",
+        legendgrouptitle_text="KDJ"), row=4, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["D"], name="D",
+        line=dict(color=ORANGE, width=1.5), legendgroup="row4"), row=4, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["J"], name="J",
+        line=dict(color=PURPLE, width=1, dash="dot"), legendgroup="row4"), row=4, col=1)
     fig.add_hline(y=80, line_color=RED, line_dash="dash", row=4, col=1)
     fig.add_hline(y=20, line_color=GREEN, line_dash="dash", row=4, col=1)
 
-    # Row5 BOLL
-    fig.add_trace(go.Scatter(x=x, y=df["BOLL_UP"], name="上轨", line=dict(color=RED, width=1.2, dash="dash")), row=5, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["BOLL_MID"], name="中轨", line=dict(color=YELLOW, width=1.2)), row=5, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["BOLL_LOW"], name="下轨", line=dict(color=GREEN, width=1.2, dash="dash"), fill="tonexty", fillcolor="rgba(63,185,80,0.05)"), row=5, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["收盘"], name="收盘(BOLL)", line=dict(color=TEXT, width=0.9)), row=5, col=1)
+    # Row5: BOLL 轨道 + K线蜡烛（替换收盘折线）
+    fig.add_trace(go.Scatter(x=x, y=df["BOLL_UP"], name="上轨",
+        line=dict(color=RED, width=1.2, dash="dash"), legendgroup="row5",
+        legendgrouptitle_text="BOLL"), row=5, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["BOLL_MID"], name="中轨",
+        line=dict(color=YELLOW, width=1.2), legendgroup="row5"), row=5, col=1)
+    fig.add_trace(go.Scatter(x=x, y=df["BOLL_LOW"], name="下轨",
+        line=dict(color=GREEN, width=1.2, dash="dash"),
+        fill="tonexty", fillcolor="rgba(63,185,80,0.05)",
+        legendgroup="row5"), row=5, col=1)
+    # BOLL子图内嵌K线蜡烛（不重复图例）
+    fig.add_trace(go.Candlestick(
+        x=x, open=df["开盘"], high=df["最高"], low=df["最低"], close=df["收盘"],
+        increasing_line_color=RED, decreasing_line_color=GREEN,
+        increasing_fillcolor=RED, decreasing_fillcolor=GREEN,
+        name="K线", showlegend=False, opacity=0.65,
+        legendgroup="row5"
+    ), row=5, col=1)
+    # BOLL信号标记（不重复图例）
+    seen_boll_sigs = set()
     for i, nm, col, tip in get_boll_signals(df):
-        fig.add_trace(go.Scatter(x=[df.loc[i, "xi"]], y=[df.loc[i, "收盘"]], mode="markers", name=f"BOLL{nm}",
-            marker=dict(symbol="star", size=9, color=col), hovertemplate=tip+"<extra></extra>"), row=5, col=1)
+        show_leg = nm not in seen_boll_sigs
+        seen_boll_sigs.add(nm)
+        fig.add_trace(go.Scatter(
+            x=[df.loc[i, "xi"]], y=[df.loc[i, "收盘"]], mode="markers",
+            name=f"BOLL{nm}", marker=dict(symbol="star", size=9, color=col),
+            hovertemplate=tip+"<extra></extra>",
+            showlegend=show_leg, legendgroup="row5"
+        ), row=5, col=1)
 
-    # Row6 BOLL %B + 带宽
-    xr2, yr2, xg2, yg2 = _seg_lines(df["xi"], df["BOLL_PB"], 0.5)
-    fig.add_trace(go.Scatter(x=xr2, y=yr2, mode="lines", name="%B红柱", line=dict(color=RED, width=2)), row=6, col=1)
-    fig.add_trace(go.Scatter(x=xg2, y=yg2, mode="lines", name="%B绿柱", line=dict(color=GREEN, width=2)), row=6, col=1)
-    fig.add_trace(go.Scatter(x=x, y=df["BOLL_BW"], name="带宽BW%", line=dict(color=PURPLE, width=1.3)), row=6, col=1)
-    fig.add_hline(y=1.0, line_color=RED, line_dash="dash", row=6, col=1)
-    fig.add_hline(y=0.0, line_color=GREEN, line_dash="dash", row=6, col=1)
-    fig.add_hline(y=0.5, line_color=GRID, row=6, col=1)
+
 
     fig.update_layout(
         title=dict(text=f"{stock_name}({stock_code}) 技术指标综合图表", x=0.5, font=dict(size=18, color=TEXT)),
         paper_bgcolor=PAPER, plot_bgcolor=BG, font=dict(color=TEXT, size=11),
-        height=1400, margin=dict(l=60, r=60, t=80, b=40),
+        height=1200, margin=dict(l=60, r=180, t=80, b=40),
         hovermode="x", xaxis_rangeslider_visible=False,
-        legend=dict(bgcolor="rgba(22,27,34,0.85)", bordercolor=GRID, borderwidth=1, font=dict(size=9))
+        legend=dict(
+            bgcolor="rgba(22,27,34,0.92)", bordercolor=GRID, borderwidth=1,
+            font=dict(size=9), tracegroupgap=12,
+            x=1.01, y=1, xanchor="left", yanchor="top"
+        )
     )
-    for r in range(1, 7):
+    for r in range(1, 6):
         fig.update_xaxes(row=r, col=1, gridcolor=GRID, tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(row=r, col=1, gridcolor=GRID)
-    for r in range(1, 6):
+    for r in range(1, 5):
         fig.update_xaxes(row=r, col=1, showticklabels=False)
 
     return fig
