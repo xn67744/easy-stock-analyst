@@ -16,9 +16,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.signal import argrelextrema
 
-DEFAULT_CSV = "09880_优必选_历史数据.csv"
-DEFAULT_NAME = "优必选"
-DEFAULT_CODE = "09880"
+DEFAULT_CSV = "601012_隆基绿能_历史数据.csv"
+DEFAULT_NAME = "隆基绿能"
+DEFAULT_CODE = "601012"
 DEFAULT_RECENT = 250
 
 BG = "#0d1117"
