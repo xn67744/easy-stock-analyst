@@ -16,9 +16,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.signal import argrelextrema
 
-DEFAULT_CSV = "000852_石化机械_历史数据.csv"
-DEFAULT_NAME = "石化机械"
-DEFAULT_CODE = "000852"
+DEFAULT_CSV = "09880_优必选_历史数据.csv"
+DEFAULT_NAME = "优必选"
+DEFAULT_CODE = "09880"
 DEFAULT_RECENT = 250
 
 BG = "#0d1117"
@@ -193,6 +193,9 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
         ]
     )
 
+    ma_trace_idx = []
+    wave_trace_idx = []
+
     # Row1: K线 + 均线 + 波段标记
     hover_txt = [
         f"{d.strftime('%Y-%m-%d')}<br>开:{o:.2f} 收:{c:.2f}<br>高:{h:.2f} 低:{l:.2f}<br>量:{v:,.0f}手"
@@ -205,14 +208,21 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
         name="K线", text=hover_txt, hoverinfo="text",
         legendgroup="row1", legendgrouptitle_text="K线图"
     ), row=1, col=1)
+    # 提高主图悬停捕捉，保证在均线图区域也能逐K移动
+    fig.add_trace(go.Scatter(
+        x=x, y=df["收盘"], mode="lines",
+        line=dict(color="rgba(0,0,0,0)", width=18),
+        hoverinfo="skip", showlegend=False, legendgroup="row1"
+    ), row=1, col=1)
 
     for ma, color in [("MA5", YELLOW), ("MA10", ORANGE), ("MA20", BLUE), ("MA60", PURPLE)]:
         if ma in df.columns:
             fig.add_trace(go.Scatter(
                 x=x, y=df[ma], name=ma, line=dict(color=color, width=1.3),
-                hovertemplate=f"{ma}: %{{y:.3f}}<extra></extra>",
+                hoverinfo="skip",
                 legendgroup="row1"
             ), row=1, col=1)
+            ma_trace_idx.append(len(fig.data) - 1)
 
     max_i = int(df["最高"].idxmax())
     min_i = int(df["最低"].idxmin())
@@ -231,21 +241,60 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
             x=[p["idx"] for p in highs], y=[p["price"] for p in highs], mode="markers",
             name="波段高点", marker=dict(symbol="triangle-down", size=8, color="rgba(248,81,73,0.7)"),
             hovertemplate="波段高点:%{y:.2f}<extra></extra>",
-            legendgroup="row1"
+            legendgroup="row1", visible=True
         ), row=1, col=1)
+        wave_trace_idx.append(len(fig.data) - 1)
     if lows:
         fig.add_trace(go.Scatter(
             x=[p["idx"] for p in lows], y=[p["price"] for p in lows], mode="markers",
             name="波段低点", marker=dict(symbol="triangle-up", size=8, color="rgba(63,185,80,0.7)"),
             hovertemplate="波段低点:%{y:.2f}<extra></extra>",
-            legendgroup="row1"
+            legendgroup="row1", visible=True
         ), row=1, col=1)
+        wave_trace_idx.append(len(fig.data) - 1)
     if len(pivots) >= 2:
         fig.add_trace(go.Scatter(
             x=[p["idx"] for p in pivots], y=[p["price"] for p in pivots], mode="lines",
             name="波浪趋势线", line=dict(color="rgba(200,200,200,0.25)", width=1, dash="dot"),
-            hoverinfo="skip", legendgroup="row1"
+            hoverinfo="skip", legendgroup="row1", visible=True
         ), row=1, col=1)
+        wave_trace_idx.append(len(fig.data) - 1)
+
+        for i in range(len(pivots) - 1):
+            p0, p1 = pivots[i], pivots[i + 1]
+            rise = p1["price"] >= p0["price"]
+            arrow_color = "#f4c542" if rise else "#ffb347"
+            fig.add_trace(go.Scatter(
+                x=[p0["idx"], p1["idx"]],
+                y=[p0["price"], p1["price"]],
+                mode="lines+markers",
+                line=dict(color=arrow_color, width=2.2),
+                marker=dict(size=[0, 10], symbol=["circle", "triangle-up" if rise else "triangle-down"], color=arrow_color),
+                name="波段箭头",
+                showlegend=(i == 0),
+                hovertemplate="波段: %{y:.2f}<extra></extra>",
+                legendgroup="row1", visible=True
+            ), row=1, col=1)
+            wave_trace_idx.append(len(fig.data) - 1)
+
+            pct = (p1["price"] / (p0["price"] + 1e-9) - 1) * 100
+            pct_txt = f"{pct:+.2f}%"
+            y_pad = (df["最高"].max() - df["最低"].min()) * 0.03
+            pct_y = ((p0["price"] + p1["price"]) / 2) + (y_pad if rise else -y_pad)
+            fig.add_trace(go.Scatter(
+                x=[(p0["idx"] + p1["idx"]) / 2],
+                y=[pct_y],
+                mode="text",
+                text=[pct_txt],
+                textposition="middle center",
+                textfont=dict(color="#9be9a8" if rise else "#ffaba8", size=10),
+                name="波段涨跌幅",
+                showlegend=False,
+                hoverinfo="skip",
+                legendgroup="row1",
+                visible=True
+            ), row=1, col=1)
+            wave_trace_idx.append(len(fig.data) - 1)
 
     # Row2: 成交量
     vol_color = [RED if c >= o else GREEN for c, o in zip(df["收盘"], df["开盘"])]
@@ -312,20 +361,73 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
 
 
 
+    show_ma_mask = [tr.visible if tr.visible is not None else True for tr in fig.data]
+    for i in wave_trace_idx:
+        show_ma_mask[i] = "legendonly"
+
+    show_wave_mask = [tr.visible if tr.visible is not None else True for tr in fig.data]
+    for i in ma_trace_idx:
+        show_wave_mask[i] = "legendonly"
+    for i in wave_trace_idx:
+        show_wave_mask[i] = True
+
     fig.update_layout(
         title=dict(text=f"{stock_name}({stock_code}) 技术指标综合图表", x=0.5, font=dict(size=18, color=TEXT)),
         paper_bgcolor=PAPER, plot_bgcolor=BG, font=dict(color=TEXT, size=11),
-        height=1200, margin=dict(l=60, r=180, t=80, b=40),
-        hovermode="x", xaxis_rangeslider_visible=False,
+        height=1200, margin=dict(l=60, r=320, t=80, b=95),
+        hovermode="x", hoverdistance=-1, spikedistance=-1,
+        xaxis_rangeslider_visible=False,
         legend=dict(
             bgcolor="rgba(22,27,34,0.92)", bordercolor=GRID, borderwidth=1,
             font=dict(size=9), tracegroupgap=12,
             x=1.01, y=1, xanchor="left", yanchor="top"
-        )
+        ),
+        updatemenus=[
+            dict(
+                type="buttons",
+                direction="down",
+                x=0.5, y=-0.08,
+                xanchor="center", yanchor="top",
+                bgcolor="#dbeafe", bordercolor="#93c5fd", borderwidth=1,
+                active=1, showactive=True,
+                font=dict(color="#0f172a", size=10),
+                buttons=[
+                    dict(label="显示均线(隐藏波段)", method="update", args=[{"visible": show_ma_mask}]),
+                    dict(label="显示波段(隐藏均线)", method="update", args=[{"visible": show_wave_mask}])
+                ]
+            )
+        ]
+    )
+
+    fig.add_annotation(
+        x=1.01, y=0.72, xref="paper", yref="paper",
+        text=(
+            f"<b>固定看板</b><br>{df.iloc[-1]['日期'].strftime('%Y-%m-%d')}"
+            f"<br>开盘: {df.iloc[-1]['开盘']:.2f}"
+            f"<br>收盘: {df.iloc[-1]['收盘']:.2f}"
+            f"<br>最高: {df.iloc[-1]['最高']:.2f}"
+            f"<br>最低: {df.iloc[-1]['最低']:.2f}"
+            f"<br>成交量: {df.iloc[-1]['成交量(手)']:,.0f}手"
+            f"<br><br>MA5/10/20/60: - / - / - / -"
+            f"<br>MACD DIF/DEA/柱: - / - / -"
+            f"<br>KDJ K/D/J: - / - / -"
+            f"<br>BOLL 上/中/下: - / - / -"
+            f"<br>BOLL %B: -"
+        ),
+        showarrow=False, align="left", font=dict(color=TEXT, size=10),
+        bgcolor="rgba(22,27,34,0.95)", bordercolor=GRID, borderwidth=1
     )
     for r in range(1, 6):
-        fig.update_xaxes(row=r, col=1, gridcolor=GRID, tickvals=tickvals, ticktext=ticktext)
-        fig.update_yaxes(row=r, col=1, gridcolor=GRID)
+        fig.update_xaxes(
+            row=r, col=1,
+            gridcolor=GRID, tickvals=tickvals, ticktext=ticktext,
+            rangeslider_visible=False,
+            showspikes=False
+        )
+        fig.update_yaxes(
+            row=r, col=1, gridcolor=GRID,
+            showspikes=False
+        )
     for r in range(1, 5):
         fig.update_xaxes(row=r, col=1, showticklabels=False)
 
@@ -361,11 +463,222 @@ def main(csv_file=DEFAULT_CSV, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE,
         fig.add_hline(y=z["build_cost"], line_color=ORANGE, line_dash="dot", row=1, col=1,
                       annotation_text=f"控盘成本 {z['build_cost']:.3f}", annotation_font_color=ORANGE)
 
-    fig.write_html(output_html, include_plotlyjs="cdn")
+    fig.write_html(
+        output_html,
+        include_plotlyjs="cdn",
+        config={"editable": True, "scrollZoom": True, "displaylogo": False}
+    )
+    _inject_hover_board_script(output_html)
     print(f"  [生成成功] {output_html}")
     print("  请用浏览器打开HTML文件查看交互图表")
     print()
     return {"output_html": output_html, "zhuang": z}
+
+
+def _inject_hover_board_script(output_html):
+    script = """
+<!-- fixed-board-hook -->
+<script>
+(function() {
+  const gd = document.querySelector('.plotly-graph-div');
+  if (!gd || !window.Plotly) return;
+
+  const style = document.createElement('style');
+  style.innerHTML = '.hoverlayer .hovertext{display:none !important;}';
+  document.head.appendChild(style);
+
+  function ensureCrosshairShape() {
+    const shapes = (gd.layout && gd.layout.shapes) ? gd.layout.shapes.slice() : [];
+    const idx = shapes.findIndex(s => s && s.name === 'cursor-vline');
+    if (idx >= 0) return idx;
+    shapes.push({
+      type: 'line',
+      name: 'cursor-vline',
+      xref: 'x',
+      yref: 'paper',
+      x0: 0,
+      x1: 0,
+      y0: 0,
+      y1: 1,
+      line: { color: '#f4c542', width: 1.2, dash: 'solid' }
+    });
+    Plotly.relayout(gd, { shapes });
+    return shapes.length - 1;
+  }
+
+  function ensureMainHLineShape() {
+    const shapes = (gd.layout && gd.layout.shapes) ? gd.layout.shapes.slice() : [];
+    const idx = shapes.findIndex(s => s && s.name === 'cursor-hline-main');
+    if (idx >= 0) return idx;
+    shapes.push({
+      type: 'line',
+      name: 'cursor-hline-main',
+      xref: 'x domain',
+      yref: 'y',
+      x0: 0,
+      x1: 1,
+      y0: 0,
+      y1: 0,
+      line: { color: '#f4c542', width: 1, dash: 'dot' }
+    });
+    Plotly.relayout(gd, { shapes });
+    return shapes.length - 1;
+  }
+
+  function ensurePriceLabelAnnotation() {
+    const anns = (gd.layout && gd.layout.annotations) ? gd.layout.annotations.slice() : [];
+    const idx = anns.findIndex(a => a && a.name === 'cursor-price-label');
+    if (idx >= 0) return idx;
+    anns.push({
+      name: 'cursor-price-label',
+      xref: 'paper',
+      yref: 'y',
+      x: 0,
+      y: 0,
+      xanchor: 'right',
+      yanchor: 'middle',
+      text: '-',
+      showarrow: false,
+      font: { color: '#f4c542', size: 10 },
+      bgcolor: 'rgba(13,17,23,0.92)',
+      bordercolor: '#f4c542',
+      borderwidth: 1,
+      align: 'right'
+    });
+    Plotly.relayout(gd, { annotations: anns });
+    return anns.length - 1;
+  }
+
+  function updateCrosshairXi(xi) {
+    const k = getMainCandle();
+    if (!k || !k.close || !k.close.length) return null;
+
+    const i = Math.max(0, Math.min(k.close.length - 1, Math.round(Number(xi))));
+    const px = Number(k.close[i]);
+
+    const vIdx = ensureCrosshairShape();
+    const hIdx = ensureMainHLineShape();
+    const aIdx = ensurePriceLabelAnnotation();
+
+    Plotly.relayout(gd, {
+      ['shapes[' + vIdx + '].x0']: i,
+      ['shapes[' + vIdx + '].x1']: i,
+      ['shapes[' + hIdx + '].y0']: px,
+      ['shapes[' + hIdx + '].y1']: px,
+      ['annotations[' + aIdx + '].y']: px,
+      ['annotations[' + aIdx + '].text']: px.toFixed(2)
+    });
+
+    return i;
+  }
+
+  function getTraceByName(name) {
+    return (gd.data || []).find(t => t && t.name === name);
+  }
+
+  function num(v, n=2) {
+    if (v == null || Number.isNaN(Number(v))) return '-';
+    return Number(v).toFixed(n);
+  }
+
+  function fmtVol(v) {
+    if (v == null || Number.isNaN(Number(v))) return '-';
+    return Number(v).toLocaleString('en-US', {maximumFractionDigits: 0});
+  }
+
+  function parseDateVolFromText(txt) {
+    const s = String(txt || '');
+    const dt = (s.split('<br>')[0] || '-').trim();
+    const m = s.match(/量:([\d,]+)手/);
+    const vol = m ? m[1] : '-';
+    return { dt, vol };
+  }
+
+  function getMainCandle() {
+    return (gd.data || []).find(t => t && t.type === 'candlestick' && t.legendgroup === 'row1');
+  }
+
+  function formatBoardByXi(xi) {
+    const i = Math.max(0, Math.round(Number(xi)));
+    const k = getMainCandle();
+    if (!k || !k.open || k.open[i] == null) return null;
+
+    const tv = parseDateVolFromText(k.text && k.text[i]);
+    const dt = tv.dt;
+    const o = k.open[i], c = k.close[i], h = k.high[i], l = k.low[i];
+    const vol = tv.vol;
+
+    const ma5 = getTraceByName('MA5');
+    const ma10 = getTraceByName('MA10');
+    const ma20 = getTraceByName('MA20');
+    const ma60 = getTraceByName('MA60');
+    const dif = getTraceByName('DIF');
+    const dea = getTraceByName('DEA');
+    const kLine = getTraceByName('K');
+    const dLine = getTraceByName('D');
+    const jLine = getTraceByName('J');
+    const bollUp = getTraceByName('上轨');
+    const bollMid = getTraceByName('中轨');
+    const bollLow = getTraceByName('下轨');
+
+    const v_ma5 = ma5 && ma5.y ? ma5.y[i] : null;
+    const v_ma10 = ma10 && ma10.y ? ma10.y[i] : null;
+    const v_ma20 = ma20 && ma20.y ? ma20.y[i] : null;
+    const v_ma60 = ma60 && ma60.y ? ma60.y[i] : null;
+
+    const v_dif = dif && dif.y ? dif.y[i] : null;
+    const v_dea = dea && dea.y ? dea.y[i] : null;
+    const v_macd = (v_dif != null && v_dea != null) ? 2 * (Number(v_dif) - Number(v_dea)) : null;
+
+    const v_k = kLine && kLine.y ? kLine.y[i] : null;
+    const v_d = dLine && dLine.y ? dLine.y[i] : null;
+    const v_j = jLine && jLine.y ? jLine.y[i] : null;
+
+    const v_bu = bollUp && bollUp.y ? bollUp.y[i] : null;
+    const v_bm = bollMid && bollMid.y ? bollMid.y[i] : null;
+    const v_bl = bollLow && bollLow.y ? bollLow.y[i] : null;
+    const v_pb = (v_bu != null && v_bl != null && Number(v_bu) !== Number(v_bl))
+      ? (Number(c) - Number(v_bl)) / (Number(v_bu) - Number(v_bl))
+      : null;
+
+    return `<b>固定看板</b><br>${dt}`
+      + `<br>开盘: ${num(o)} | 收盘: ${num(c)}`
+      + `<br>最高: ${num(h)} | 最低: ${num(l)}`
+      + `<br>成交量: ${vol}手`
+      + `<br><br>MA5/10/20/60: ${num(v_ma5)} / ${num(v_ma10)} / ${num(v_ma20)} / ${num(v_ma60)}`
+      + `<br>MACD DIF/DEA/柱: ${num(v_dif)} / ${num(v_dea)} / ${num(v_macd)}`
+      + `<br>KDJ K/D/J: ${num(v_k)} / ${num(v_d)} / ${num(v_j)}`
+      + `<br>BOLL 上/中/下: ${num(v_bu)} / ${num(v_bm)} / ${num(v_bl)}`
+      + `<br>BOLL %B: ${num(v_pb, 3)}`;
+  }
+
+  gd.on('plotly_hover', function(ev) {
+    if (!ev || !ev.points || !ev.points.length) return;
+    const p0 = ev.points[0];
+    const xi = p0.x;
+    if (xi == null) return;
+
+    const idxXi = updateCrosshairXi(xi);
+    if (idxXi == null) return;
+
+    const anns = (gd.layout && gd.layout.annotations) ? gd.layout.annotations : [];
+    const idx = anns.findIndex(a => (a.text || '').includes('固定看板'));
+    if (idx < 0) return;
+
+    const board = formatBoardByXi(idxXi);
+    if (!board) return;
+    Plotly.relayout(gd, {['annotations[' + idx + '].text']: board});
+  });
+})();
+</script>
+"""
+    with open(output_html, "r", encoding="utf-8") as f:
+        html = f.read()
+    if "fixed-board-hook" in html:
+        return
+    html = html.replace("</body>", script + "\n</body>")
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html)
 
 
 if __name__ == "__main__":
