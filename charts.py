@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.signal import argrelextrema
 
-DEFAULT_CSV = "601012_隆基绿能_历史数据.csv"
+DEFAULT_CSV = "601012_隆基绿能_日 K数据.csv"
 DEFAULT_NAME = "隆基绿能"
 DEFAULT_CODE = "601012"
 DEFAULT_RECENT = 250
@@ -127,6 +127,13 @@ def get_boll_signals(df, w=20):
     return sigs
 
 
+def get_cross_indices(fast_s: pd.Series, slow_s: pd.Series):
+    valid = fast_s.notna() & slow_s.notna() & fast_s.shift(1).notna() & slow_s.shift(1).notna()
+    golden = valid & (fast_s.shift(1) <= slow_s.shift(1)) & (fast_s > slow_s)
+    dead = valid & (fast_s.shift(1) >= slow_s.shift(1)) & (fast_s < slow_s)
+    return golden[golden].index.tolist(), dead[dead].index.tolist()
+
+
 def analyze_zhuang(df):
     c = df["收盘"]
     v = df["成交量(手)"]
@@ -224,6 +231,22 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
             ), row=1, col=1)
             ma_trace_idx.append(len(fig.data) - 1)
 
+    # 主图金叉/死叉（MA5 与 MA20）
+    if "MA5" in df.columns and "MA20" in df.columns:
+        gx_idx, dx_idx = get_cross_indices(df["MA5"], df["MA20"])
+        if gx_idx:
+            fig.add_trace(go.Scatter(
+                x=df.loc[gx_idx, "xi"], y=df.loc[gx_idx, "收盘"], mode="markers",
+                name="均线金叉", marker=dict(symbol="triangle-up", size=10, color="#9be9a8"),
+                hovertemplate="均线金叉<extra></extra>", legendgroup="row1"
+            ), row=1, col=1)
+        if dx_idx:
+            fig.add_trace(go.Scatter(
+                x=df.loc[dx_idx, "xi"], y=df.loc[dx_idx, "收盘"], mode="markers",
+                name="均线死叉", marker=dict(symbol="triangle-down", size=10, color="#ffaba8"),
+                hovertemplate="均线死叉<extra></extra>", legendgroup="row1"
+            ), row=1, col=1)
+
     max_i = int(df["最高"].idxmax())
     min_i = int(df["最低"].idxmin())
     fig.add_annotation(x=df.loc[max_i, "xi"], y=df.loc[max_i, "最高"],
@@ -316,6 +339,20 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
         legendgrouptitle_text="MACD"), row=3, col=1)
     fig.add_trace(go.Scatter(x=x, y=df["DEA"], name="DEA",
         line=dict(color=ORANGE, width=1.5), legendgroup="row3"), row=3, col=1)
+
+    gx_idx, dx_idx = get_cross_indices(df["DIF"], df["DEA"])
+    if gx_idx:
+        fig.add_trace(go.Scatter(
+            x=df.loc[gx_idx, "xi"], y=df.loc[gx_idx, "DIF"], mode="markers",
+            name="MACD金叉", marker=dict(symbol="diamond", size=8, color="#9be9a8"),
+            hovertemplate="MACD金叉<extra></extra>", legendgroup="row3"
+        ), row=3, col=1)
+    if dx_idx:
+        fig.add_trace(go.Scatter(
+            x=df.loc[dx_idx, "xi"], y=df.loc[dx_idx, "DIF"], mode="markers",
+            name="MACD死叉", marker=dict(symbol="diamond", size=8, color="#ffaba8"),
+            hovertemplate="MACD死叉<extra></extra>", legendgroup="row3"
+        ), row=3, col=1)
     fig.add_hline(y=0, line_color=GRID, line_width=1, row=3, col=1)
 
     # Row4: KDJ
@@ -326,6 +363,20 @@ def build_chart(df, stock_name=DEFAULT_NAME, stock_code=DEFAULT_CODE):
         line=dict(color=ORANGE, width=1.5), legendgroup="row4"), row=4, col=1)
     fig.add_trace(go.Scatter(x=x, y=df["J"], name="J",
         line=dict(color=PURPLE, width=1, dash="dot"), legendgroup="row4"), row=4, col=1)
+
+    kx_idx, sx_idx = get_cross_indices(df["K"], df["D"])
+    if kx_idx:
+        fig.add_trace(go.Scatter(
+            x=df.loc[kx_idx, "xi"], y=df.loc[kx_idx, "K"], mode="markers",
+            name="KDJ金叉", marker=dict(symbol="triangle-up", size=8, color="#9be9a8"),
+            hovertemplate="KDJ金叉<extra></extra>", legendgroup="row4"
+        ), row=4, col=1)
+    if sx_idx:
+        fig.add_trace(go.Scatter(
+            x=df.loc[sx_idx, "xi"], y=df.loc[sx_idx, "K"], mode="markers",
+            name="KDJ死叉", marker=dict(symbol="triangle-down", size=8, color="#ffaba8"),
+            hovertemplate="KDJ死叉<extra></extra>", legendgroup="row4"
+        ), row=4, col=1)
     fig.add_hline(y=80, line_color=RED, line_dash="dash", row=4, col=1)
     fig.add_hline(y=20, line_color=GREEN, line_dash="dash", row=4, col=1)
 
